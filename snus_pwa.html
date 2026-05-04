@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Snus Tracker">
+<meta name="theme-color" content="#ffffff">
+<title>Snus Step-Down Tracker</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  :root{
+    --bg:#fff;--bg2:#f5f5f4;--bg3:#eeede9;
+    --text:#1a1a18;--text2:#6b6b67;--text3:#9b9b97;
+    --green:#1D9E75;--amber:#BA7517;--red:#E24B4A;
+    --border:rgba(0,0,0,0.1);--radius:12px;--radius-sm:8px;
+  }
+  @media(prefers-color-scheme:dark){
+    :root{--bg:#1c1c1a;--bg2:#282825;--bg3:#323230;--text:#f0efe9;--text2:#a0a09a;--text3:#6b6b67;--border:rgba(255,255,255,0.1)}
+  }
+  body{font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;padding-bottom:env(safe-area-inset-bottom)}
+  #app{max-width:480px;margin:0 auto;padding:20px 16px}
+  h1{font-size:22px;font-weight:500;margin-bottom:4px}
+  .sub{font-size:13px;color:var(--text2);margin-bottom:20px}
+  .tabs{display:flex;gap:8px;margin-bottom:20px}
+  .tab{flex:1;padding:8px 0;font-size:13px;border:0.5px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text);cursor:pointer}
+  .tab.active{background:var(--bg2);font-weight:500}
+  .cards{display:flex;gap:10px;margin-bottom:16px}
+  .card{flex:1;min-width:0;background:var(--bg2);border-radius:var(--radius-sm);padding:12px}
+  .card-label{font-size:11px;color:var(--text2);margin-bottom:4px}
+  .card-val{font-size:20px;font-weight:500}
+  .card-sub{font-size:11px;color:var(--text2);margin-top:2px}
+  .bar-row{display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-bottom:6px}
+  .bar-bg{height:10px;background:var(--bg3);border-radius:6px;overflow:hidden;margin-bottom:24px}
+  .bar-fill{height:100%;border-radius:6px;transition:width .3s}
+  .btn{width:100%;padding:14px;font-size:16px;border:0.5px solid var(--border);border-radius:var(--radius);background:transparent;color:var(--text);cursor:pointer;margin-bottom:10px}
+  .btn:active{opacity:.7}
+  .btn-sm{padding:10px;font-size:14px}
+  .btn-row{display:flex;gap:8px;margin-bottom:20px}
+  .btn-row .btn{margin-bottom:0}
+  .modal{margin-top:12px;background:var(--bg2);border-radius:var(--radius);padding:16px;border:0.5px solid var(--border)}
+  .modal-title{font-size:14px;font-weight:500;margin-bottom:12px}
+  input[type=number],input[type=text]{width:100%;padding:10px 12px;font-size:14px;border:0.5px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);margin-bottom:10px}
+  input[type=range]{width:100%;accent-color:var(--green)}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg2);border-radius:var(--radius-sm);margin-bottom:6px;font-size:14px}
+  .row-label{color:var(--text2);font-size:12px}
+  .day-bar-bg{height:6px;background:var(--bg);border-radius:4px;overflow:hidden;margin-top:6px}
+  .day-bar-fill{height:100%;border-radius:4px}
+  .setup{padding:24px 0}
+  .setup h2{font-size:20px;font-weight:500;margin-bottom:8px}
+  .setup p{font-size:14px;color:var(--text2);margin-bottom:20px}
+  .schedule{background:var(--bg2);border-radius:var(--radius);padding:12px 16px;margin-bottom:24px}
+  .sched-row{display:flex;justify-content:space-between;font-size:13px;padding:3px 0;color:var(--text2)}
+  .sched-row.today-row{color:var(--text);font-weight:500}
+  .notif-banner{background:var(--bg2);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--text2);display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px}
+  .badge-green{background:#d1f5e8;color:#0b5e42}
+  .badge-red{background:#fce8e8;color:#7a1f1f}
+  @media(prefers-color-scheme:dark){.badge-green{background:#0d4a34;color:#5dcaa5}.badge-red{background:#4a1515;color:#f09595}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const KEY = 'snustracker_v1';
+const R_HOURS = [8, 13, 19];
+
+function today() { return new Date().toISOString().slice(0,10); }
+function dayIdx(startDate) {
+  return Math.max(0, Math.floor((new Date(today()) - new Date(startDate)) / 86400000));
+}
+function limitForDay(start, idx, days=14) {
+  return Math.max(0, Math.round(start - (start / days) * idx));
+}
+function load() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; }
+}
+function save(d) { localStorage.setItem(KEY, JSON.stringify(d)); }
+
+let state = load() || { setupDone:false, startingLimit:15, startDate:today(), habits:{}, purchases:[] };
+let currentTab = 'today';
+let showBuyModal = false;
+let buyPrice = '', buyNote = '';
+
+async function requestNotifications() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'granted') { scheduleNotifications(); return; }
+  const p = await Notification.requestPermission();
+  if (p === 'granted') scheduleNotifications();
+}
+
+function scheduleNotifications() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.ready.then(sw => {
+    sw.active && sw.active.postMessage({ type:'SCHEDULE', hours: R_HOURS });
+  });
+}
+
+function render() {
+  const app = document.getElementById('app');
+  if (!state.setupDone) { app.innerHTML = setupHTML(); bindSetup(); return; }
+  app.innerHTML = mainHTML();
+  bindMain();
+}
+
+function setupHTML() {
+  const lim = state.startingLimit;
+  const days = [0,2,4,6,8,10,12,13];
+  const rows = days.map(d => `
+    <div class="sched-row ${d===0?'today-row':''}">
+      <span>Day ${d+1}</span><span>${limitForDay(lim,d)} pouches</span>
+    </div>`).join('');
+  return `<div class="setup">
+    <h2>Set up your plan</h2>
+    <p>How many pouches do you use per day right now?</p>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
+      <input type="range" id="sl" min="1" max="40" value="${lim}" step="1">
+      <span style="font-size:24px;font-weight:500;min-width:32px" id="sv">${lim}</span>
+    </div>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:20px">pouches/day now → 0 in 14 days</p>
+    <div class="schedule">${rows}</div>
+    <button class="btn" id="startBtn">Start my plan</button>
+  </div>`;
+}
+
+function bindSetup() {
+  const sl = document.getElementById('sl');
+  const sv = document.getElementById('sv');
+  sl.oninput = () => { state.startingLimit = +sl.value; sv.textContent = sl.value; };
+  document.getElementById('startBtn').onclick = () => {
+    state.setupDone = true; state.startDate = today(); state.habits = {}; state.purchases = [];
+    save(state); requestNotifications(); render();
+  };
+}
+
+function mainHTML() {
+  const t = today();
+  const cnt = state.habits[t] || 0;
+  const idx = dayIdx(state.startDate);
+  const lim = limitForDay(state.startingLimit, idx);
+  const daysLeft = Math.max(0, 14 - idx);
+  const pct = lim === 0 ? (cnt > 0 ? 100 : 0) : Math.min(100, Math.round(cnt/lim*100));
+  const barColor = pct >= 100 ? 'var(--red)' : pct >= 75 ? 'var(--amber)' : 'var(--green)';
+  const valColor = pct >= 100 ? 'var(--red)' : pct >= 75 ? 'var(--amber)' : 'var(--green)';
+  const rem = Math.max(0, lim - cnt);
+
+  const totalSpent = state.purchases.reduce((s,p) => s+p.price, 0);
+  const todaySpend = state.purchases.filter(p=>p.date===t).reduce((s,p)=>s+p.price,0);
+
+  const streak = calcStreak();
+  const saved = Math.max(0, (idx+1)*state.startingLimit - Object.values(state.habits).reduce((s,v)=>s+v,0));
+
+  const notifStatus = 'Notification' in window ? Notification.permission : 'unsupported';
+
+  const todayTab = `
+    ${notifStatus !== 'granted' && notifStatus !== 'unsupported' ? `
+    <div class="notif-banner">
+      <span>Enable reminders to log daily</span>
+      <button class="btn btn-sm" id="notifBtn" style="width:auto;padding:6px 12px;font-size:12px">Enable</button>
+    </div>` : ''}
+    <div class="cards">
+      <div class="card"><div class="card-label">Limit today</div><div class="card-val">${lim}</div><div class="card-sub">pouches</div></div>
+      <div class="card"><div class="card-label">Used</div><div class="card-val" style="color:${valColor}">${cnt}</div></div>
+      <div class="card"><div class="card-label">Remaining</div><div class="card-val" style="color:${rem===0&&cnt>0?'var(--red)':'var(--text)'}">${rem}</div></div>
+    </div>
+    <div class="bar-row"><span>Progress</span><span>${pct}%</span></div>
+    <div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+    <div class="btn-row">
+      <button class="btn" id="logBtn" style="flex:2">+ Log one pouch</button>
+      <button class="btn" id="undoBtn" style="flex:1" ${cnt===0?'disabled':''}>Undo</button>
+    </div>
+    <div class="cards" style="margin-bottom:20px">
+      <div class="card"><div class="card-label">Streak</div><div class="card-val">${streak}d</div><div class="card-sub">under limit</div></div>
+      <div class="card"><div class="card-label">Saved vs baseline</div><div class="card-val">${saved}</div><div class="card-sub">pouches</div></div>
+    </div>
+    <button class="btn btn-sm" id="buyBtn">Log a purchase</button>
+    ${showBuyModal ? `<div class="modal">
+      <div class="modal-title">Log purchase</div>
+      <input type="number" id="bp" placeholder="Price (€)" value="${buyPrice}" inputmode="decimal">
+      <input type="text" id="bn" placeholder="Note (optional)" value="${buyNote}">
+      <div class="btn-row">
+        <button class="btn btn-sm" id="saveBuy">Save</button>
+        <button class="btn btn-sm" id="cancelBuy">Cancel</button>
+      </div>
+    </div>` : ''}`;
+
+  const historyTab = (() => {
+    const rows = Array.from({length: Math.min(14, idx+1)}, (_,i) => {
+      const d = new Date(state.startDate); d.setDate(d.getDate()+(idx-i));
+      const k = d.toISOString().slice(0,10);
+      const c = state.habits[k]||0;
+      const l = limitForDay(state.startingLimit, idx-i);
+      const over = c > l;
+      const p = l===0 ? (c>0?100:0) : Math.min(100, Math.round(c/l*100));
+      return `<div class="row" style="flex-direction:column;align-items:stretch">
+        <div style="display:flex;justify-content:space-between">
+          <span class="row-label">${k===t?'Today':k}</span>
+          <span style="font-size:13px;font-weight:500;color:${over?'var(--red)':'var(--green)'}">${c} / ${l}</span>
+        </div>
+        <div class="day-bar-bg"><div class="day-bar-fill" style="width:${p}%;background:${over?'var(--red)':'var(--green)'}"></div></div>
+      </div>`;
+    }).join('');
+    return `${rows}<div style="text-align:center;margin-top:16px"><button class="btn btn-sm" id="resetBtn" style="color:var(--text2);width:auto;padding:8px 16px;font-size:13px">Reset all data</button></div>`;
+  })();
+
+  const spendingTab = (() => {
+    const rows = [...state.purchases].reverse().map(p =>
+      `<div class="row"><div><div style="font-size:12px;color:var(--text2)">${p.date}${p.note?' · '+p.note:''}</div></div><div style="font-weight:500">€${Number(p.price).toFixed(2)}</div></div>`
+    ).join('') || `<p style="text-align:center;padding:24px 0;color:var(--text2);font-size:14px">No purchases logged yet</p>`;
+    return `<div class="cards">
+      <div class="card"><div class="card-label">Total spent</div><div class="card-val">€${totalSpent.toFixed(2)}</div></div>
+      <div class="card"><div class="card-label">Today</div><div class="card-val">€${todaySpend.toFixed(2)}</div></div>
+      <div class="card"><div class="card-label">Purchases</div><div class="card-val">${state.purchases.length}</div></div>
+    </div>${rows}`;
+  })();
+
+  const tabs = ['today','history','spending'];
+  return `
+    <h1>Snus step-down</h1>
+    <p class="sub">${daysLeft>0?`Day ${idx+1} of 14 — ${daysLeft} days to go`:'Day 14 — you made it!'}</p>
+    <div class="tabs">${tabs.map(t=>`<button class="tab ${currentTab===t?'active':''}" data-tab="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}</div>
+    <div id="tab-content">${currentTab==='today'?todayTab:currentTab==='history'?historyTab:spendingTab}</div>`;
+}
+
+function calcStreak() {
+  let s = 0;
+  const d = new Date(today());
+  while(true) {
+    const k = d.toISOString().slice(0,10);
+    const di = dayIdx2(state.startDate, k);
+    const lim = limitForDay(state.startingLimit, di);
+    const cnt = state.habits[k];
+    if (cnt !== undefined && cnt <= lim) { s++; d.setDate(d.getDate()-1); }
+    else if (k === today() && cnt === undefined) { d.setDate(d.getDate()-1); }
+    else break;
+  }
+  return s;
+}
+
+function dayIdx2(startDate, dateStr) {
+  return Math.max(0, Math.floor((new Date(dateStr) - new Date(startDate)) / 86400000));
+}
+
+function bindMain() {
+  document.querySelectorAll('.tab').forEach(b => {
+    b.onclick = () => { currentTab = b.dataset.tab; render(); };
+  });
+  const t = today();
+  const logBtn = document.getElementById('logBtn');
+  const undoBtn = document.getElementById('undoBtn');
+  const buyBtn = document.getElementById('buyBtn');
+  const notifBtn = document.getElementById('notifBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  if (logBtn) logBtn.onclick = () => { state.habits[t] = (state.habits[t]||0)+1; save(state); render(); };
+  if (undoBtn) undoBtn.onclick = () => { state.habits[t] = Math.max(0,(state.habits[t]||0)-1); save(state); render(); };
+  if (buyBtn) buyBtn.onclick = () => { showBuyModal = !showBuyModal; render(); };
+  if (notifBtn) notifBtn.onclick = () => requestNotifications();
+  if (resetBtn) resetBtn.onclick = () => { if(confirm('Reset all data?')) { state={setupDone:false,startingLimit:15,startDate:today(),habits:{},purchases:[]}; save(state); render(); }};
+  const saveBuy = document.getElementById('saveBuy');
+  const cancelBuy = document.getElementById('cancelBuy');
+  const bp = document.getElementById('bp');
+  const bn = document.getElementById('bn');
+  if (bp) bp.oninput = e => buyPrice = e.target.value;
+  if (bn) bn.oninput = e => buyNote = e.target.value;
+  if (saveBuy) saveBuy.onclick = () => {
+    if (!buyPrice) return;
+    state.purchases.push({date:t, price:parseFloat(buyPrice), note:buyNote});
+    save(state); buyPrice=''; buyNote=''; showBuyModal=false; render();
+  };
+  if (cancelBuy) cancelBuy.onclick = () => { showBuyModal=false; render(); };
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').then(() => {
+    if (state.setupDone && Notification.permission==='granted') scheduleNotifications();
+  });
+}
+
+render();
+</script>
+</body>
+</html>
